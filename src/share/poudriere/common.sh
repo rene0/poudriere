@@ -7488,6 +7488,9 @@ HOOKDIR=${POUDRIERED}/hooks
 [ -z "${NO_ZFS}" -a -z ${ZPOOL} ] && err 1 "ZPOOL variable is not set"
 [ -z ${BASEFS} ] && err 1 "Please provide a BASEFS variable in your poudriere.conf"
 
+ALTROOT=$(zpool get -H -o value altroot ${ZPOOL})
+ALTROOT=${ALTROOT#*-}
+
 trap sigpipe_handler SIGPIPE
 trap sigint_handler SIGINT
 trap sigterm_handler SIGTERM
