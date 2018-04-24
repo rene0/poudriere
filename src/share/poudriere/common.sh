@@ -1345,6 +1345,7 @@ get_data_dir() {
 	fi
 
 	if [ -z "${NO_ZFS}" ]; then
+		echo "get_data_dir: NS=${NS} ZPOOL=${ZPOOL} ZROOT=${ZROOTFS} ALTROOT=${ALTROOT} BASEFS=${BASEFS}"
 		data=$(zfs list -rt filesystem -H -o ${NS}:type,mountpoint ${ZPOOL}${ZROOTFS} 2>/dev/null |
 		    awk '$1 == "data" { print $2; exit; }')
 		if [ -n "${data}" ]; then
@@ -1453,6 +1454,7 @@ markfs() {
 	local name=$1
 	local mnt="${2}"
 	local path="$3"
+	echo "markfs 1: mnt=${mnt} ALTROOT=${ALTROOT}"
 	local fs="$(zfs_getfs ${mnt})"
 	local dozfs=0
 	local domtree=0
@@ -1479,6 +1481,7 @@ markfs() {
 
 	if [ $dozfs -eq 1 ]; then
 		# remove old snapshot if exists
+		echo "markfs 2: fs=${fs} name=${name} ALTROOT=${ALTROOT}"
 		zfs destroy -r ${fs}@${name} 2>/dev/null || :
 		rollback_file "${mnt}" "${name}" snapfile
 		unlink "${snapfile}" || :
@@ -7498,6 +7501,7 @@ HOOKDIR=${POUDRIERED}/hooks
 
 ALTROOT=$(zpool get -H -o value altroot ${ZPOOL})
 ALTROOT=${ALTROOT#*-}
+echo "common.sh: ALTROOT=${ALTROOT} ZPOOL=${ZPOOL}"
 
 trap sigpipe_handler SIGPIPE
 trap sigint_handler SIGINT
@@ -7586,6 +7590,7 @@ if [ ! -d ${POUDRIERED}/ports ]; then
 			pset ${name} method ${method}
 			pset ${name} mnt ${mnt}
 			pset ${name} fs ${fs}
+			echo "cvt_portstree: NS=${NS} fs=${fs}"
 			# Delete the old properties
 			zfs inherit -r ${NS}:type ${fs}
 			zfs inherit -r ${NS}:name ${fs}
@@ -7616,6 +7621,7 @@ if [ ! -d ${POUDRIERED}/jails ]; then
 			jset ${name} method ${method}
 			jset ${name} mnt ${mnt}
 			jset ${name} fs ${fs}
+			echo "cvt_jail: NS=${NS} fs=${fs}"
 			# Delete the old properties
 			zfs inherit -r ${NS}:type ${fs}
 			zfs inherit -r ${NS}:name ${fs}

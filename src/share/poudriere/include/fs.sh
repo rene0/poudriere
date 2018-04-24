@@ -34,6 +34,7 @@ createfs() {
 
 	if [ -n "${fs}" -a "${fs}" != "none" ]; then
 		msg_n "Creating ${name} fs at ${mnt}..."
+		echo "createfs: name=${name} mnt=${mnt} ALTROOT=${ALTROOT}"
 		if ! zfs create -p \
 			-o compression=lz4 \
 			-o atime=off \
@@ -104,6 +105,7 @@ rollbackfs() {
 	local fs="${3-$(zfs_getfs ${mnt})}"
 	local sfile tries
 
+	echo "rollbackfs: fs=${fs} name=${name} ALTROOT=${ALTROOT}"
 	if [ -n "${fs}" ]; then
 		# ZFS has a race with rollback+snapshot.  If ran concurrently
 		# it is possible that the rollback will "succeed" but the
@@ -191,6 +193,7 @@ _zfs_getfs() {
 	[ $# -ne 1 ] && eargs _zfs_getfs mnt
 	local mnt="${1}"
 
+	echo "_zfs_getfs: mnt=${mnt} ZPOOL=${ZPOOL} ZROOTFS=${ZROOTFS} ALTROOT=${ALTROOT}"
 	mntres=$(realpath "${mnt}" 2>/dev/null || echo "${mnt}")
 	zfs list -rt filesystem -H -o name,mountpoint ${ZPOOL}${ZROOTFS} | \
 	    awk -vmnt="${mntres}" '$2 == mnt {print $1}'
@@ -259,6 +262,7 @@ clonefs() {
 		else
 			zfs_to=${fs}/${name}
 		fi
+		echo "clonefs: to=${to} fs=${fs} snap=${snap} zfs_to=${zfs_to} ALTROOT=${ALTROOT}"
 
 		zfs clone -o mountpoint=${to} \
 			-o sync=disabled \
@@ -359,6 +363,7 @@ destroyfs() {
 	else
 		[ "${fs}" != "none" ] && fs=$(zfs_getfs ${mnt})
 		if [ -n "${fs}" -a "${fs}" != "none" ]; then
+			echo "destroyfs: fs=${fs} mnt=${mnt} ALTROOT=${ALTROOT}"
 			zfs destroy -rf ${fs}
 			rmdir ${mnt} || :
 			# Must invalidate the zfs_getfs cache.

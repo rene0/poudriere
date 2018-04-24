@@ -236,6 +236,7 @@ check_portsnap_interactive() {
 }
 
 if [ ${CREATE} -eq 1 ]; then
+	echo "ports.sh: ZPOOL=${ZPOOL} ZROOTFS=${ZROOTFS} ALTROOT=${ALTROOT}"
 	# test if it already exists
 	porttree_exists ${PTNAME} && err 2 "The ports tree, ${PTNAME}, already exists"
 	maybe_run_queued "${saved_argv}"

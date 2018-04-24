@@ -52,6 +52,7 @@ EOF
 }
 
 delete_image() {
+	echo "delete_image: zroot=${zroot} ZPOOL=${ZPOOL} ALTROOT=${ALTROOT}"
 	[ ! -f "${excludelist}" ] || rm -f ${excludelist}
 	[ -z "${zroot}" ] || zpool destroy -f ${zroot}
 
@@ -267,6 +268,7 @@ zrawdisk)
 	truncate -s ${IMAGESIZE} ${WRKDIR}/raw.img
 	md=$(/sbin/mdconfig ${WRKDIR}/raw.img)
 	zroot=${IMAGENAME}root
+	echo "zrawdisk 1: zroot=${zroot} ZPOOL=${ZPOOL} ALTROOT=${ALTROOT}"
 	zpool create \
 		-O mountpoint=none \
 		-O compression=lz4 \
@@ -539,6 +541,7 @@ embedded)
 	;;
 zrawdisk)
 	FINALIMAGE=${IMAGENAME}.img
+	echo "zrawdisk 2: zroot=${zroot} ZPOOL=${ZPOOL} ALTROOT=${ALTROOT}"
 	zfs umount -f ${zroot}/ROOT/default
 	zfs set mountpoint=none ${zroot}/ROOT/default
 	zfs set readonly=on ${zroot}/var/empty
