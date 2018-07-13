@@ -1360,10 +1360,13 @@ get_data_dir() {
 			zfs get -H -o value mountpoint ${ZPOOL}${ZROOTFS}/data
 			return
 		fi
+		# rene: this zfs create inherits ALTROOT in the mountpoint property
+		# so BASEFS is forcibly prefixed with ALTROOT
 		zfs create -p -o ${NS}:type=data \
 			-o atime=off \
 			-o mountpoint=${BASEFS}/data \
 			${ZPOOL}${ZROOTFS}/data
+		# rene: these work as expected:
 		zfs create ${ZPOOL}${ZROOTFS}/data/.m
 		zfs create -o compression=off ${ZPOOL}${ZROOTFS}/data/cache
 		zfs create -o compression=lz4 ${ZPOOL}${ZROOTFS}/data/logs

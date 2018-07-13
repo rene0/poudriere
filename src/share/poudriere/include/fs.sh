@@ -34,7 +34,8 @@ createfs() {
 
 	if [ -n "${fs}" -a "${fs}" != "none" ]; then
 		msg_n "Creating ${name} fs at ${mnt}..."
-		echo "createfs: name=${name} mnt=${mnt} ALTROOT=${ALTROOT}"
+		# rene: this should also have the forced ALTROOT prefixed
+		echo "createfs: name=${name} fs=${fs} mnt=${mnt} ALTROOT=${ALTROOT}"
 		if ! zfs create -p \
 			-o compression=lz4 \
 			-o atime=off \
@@ -48,6 +49,7 @@ createfs() {
 		cache_invalidate _zfs_getfs "${mnt}"
 	else
 		msg_n "Creating ${name} fs at ${mnt}..."
+		echo "createfs 'none': altroot=${ALTROOT} mnt=${mnt}"
 		if ! mkdir -p "${mnt}"; then
 			echo " fail"
 			err 1 "Failed to create directory ${mnt}"
@@ -355,6 +357,7 @@ destroyfs() {
 
 	umountfs ${mnt} 1
 	if [ ${TMPFS_ALL} -eq 1 ]; then
+		echo "destroyfs: mnt=${mnt}"
 		if [ -d "${mnt}" ]; then
 			if ! umount ${UMOUNT_NONBUSY} "${mnt}" 2>/dev/null; then
 				umount -f "${mnt}" 2>/dev/null || :

@@ -240,8 +240,12 @@ if [ ${CREATE} -eq 1 ]; then
 	# test if it already exists
 	porttree_exists ${PTNAME} && err 2 "The ports tree, ${PTNAME}, already exists"
 	maybe_run_queued "${saved_argv}"
+	# XXX rene ALTROOT before ZROOTFS in PTMNT ?
+	echo "BASEFS=${BASEFS}"
 	: ${PTMNT="${BASEFS:=/usr/local${ZROOTFS}}/ports/${PTNAME}"}
+	echo "PTMNT=${PTMNT}"
 	: ${PTFS="${ZPOOL}${ZROOTFS}/ports/${PTNAME}"}
+	echo "PTFS=${PTFS}"
 
 	[ "${PTNAME#*.*}" = "${PTNAME}" ] ||
 		err 1 "The ports name cannot contain a period (.). See jail(8)"
@@ -353,6 +357,7 @@ if [ ${UPDATE} -eq 1 ]; then
 	porttree_exists ${PTNAME} || err 2 "No such ports tree ${PTNAME}"
 	METHOD=$(pget ${PTNAME} method)
 	PTMNT=$(pget ${PTNAME} mnt)
+	echo "pt update: PTMNT=${PTMNT}"
 	[ -d "${PTMNT}/ports" ] && PORTSMNT="${PTMNT}/ports"
 	${NULLMOUNT} | /usr/bin/grep -q "${PORTSMNT:-${PTMNT}} on" \
 		&& err 1 "Ports tree \"${PTNAME}\" is currently mounted and being used."
@@ -378,6 +383,7 @@ if [ ${UPDATE} -eq 1 ]; then
 		msg_n "Updating portstree \"${PTNAME}\" with ${METHOD}..."
 		[ ${VERBOSE} -gt 0 ] || quiet="-q"
 		${SVN_CMD} upgrade ${PORTSMNT:-${PTMNT}} 2>/dev/null || :
+		echo "svn: PORTSMNT=${PORTSMNT} PTMNT=${PTMNT} t=${PORTSMNT:-${PTMNT}}"
 		${SVN_CMD} ${quiet} update \
 			${SVN_PRESERVE_TIMESTAMP} \
 			${PORTSMNT:-${PTMNT}}
