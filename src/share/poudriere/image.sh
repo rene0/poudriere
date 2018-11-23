@@ -1,8 +1,8 @@
 #!/bin/sh
-# 
+#
 # Copyright (c) 2015 Baptiste Daroussin <bapt@FreeBSD.org>
 # All rights reserved.
-# 
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
 # are met:
@@ -11,7 +11,7 @@
 # 2. Redistributions in binary form must reproduce the above copyright
 #    notice, this list of conditions and the following disclaimer in the
 #    documentation and/or other materials provided with the distribution.
-# 
+#
 # THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
 # ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -44,7 +44,7 @@ Parameters:
     -t type         -- Type of image can be one of (default iso+zmfs):
                     -- iso, iso+mfs, iso+zmfs, usb, usb+mfs, usb+zmfs,
                        rawdisk, zrawdisk, tar, firmware, rawfirmware,
-                       embedded
+                       embedded, dump
     -X excludefile  -- File containing the list in cpdup format
     -z set          -- Set
 EOF
@@ -55,6 +55,7 @@ delete_image() {
 	echo "delete_image: zroot=${zroot} ZPOOL=${ZPOOL} ALTROOT=${ALTROOT}"
 	[ ! -f "${excludelist}" ] || rm -f ${excludelist}
 	[ -z "${zroot}" ] || zpool destroy -f ${zroot}
+	[ -z "${md}" ] || /sbin/mdconfig -d -u ${md#md}
 
 	destroyfs ${WRKDIR} image
 }
@@ -102,7 +103,7 @@ mkminiroot() {
 		cp -p ${WRKDIR}/world/${f} ${mroot}/${f}
 		recursecopylib ${f}
 	done
-	cp -fRLp ${MINIROOT}/ ${mroot}/
+	cp -fRPp ${MINIROOT}/ ${mroot}/
 
 	makefs ${OUTPUTDIR}/${IMAGENAME}-miniroot ${mroot}
 	[ -f ${OUTPUTDIR}/${IMAGENAME}-miniroot.gz ] && rm ${OUTPUTDIR}/${IMAGENAME}-miniroot.gz
@@ -157,7 +158,7 @@ while getopts "c:f:h:j:m:n:o:p:s:t:X:z:" FLAG; do
 			case ${MEDIATYPE} in
 			iso|iso+mfs|iso+zmfs|usb|usb+mfs|usb+zmfs) ;;
 			rawdisk|zrawdisk|tar|firmware|rawfirmware) ;;
-			embedded) ;;
+			embedded|dump) ;;
 			*) err 1 "invalid mediatype: ${MEDIATYPE}"
 			esac
 			;;
@@ -214,7 +215,7 @@ jail_exists ${JAILNAME} || err 1 "The jail ${JAILNAME} does not exist"
 _jget arch ${JAILNAME} arch
 get_host_arch host_arch
 case "${MEDIATYPE}" in
-usb|*firmware|rawdisk|embedded)
+usb|*firmware|*rawdisk|embedded|dump)
 	[ -n "${IMAGESIZE}" ] || err 1 "Please specify the imagesize"
 	_jget mnt ${JAILNAME} mnt
 	test -f ${mnt}/boot/kernel/kernel || err 1 "The ${MEDIATYPE} media type requires a jail with a kernel"
@@ -242,6 +243,39 @@ var/db/etcupdate
 boot/kernel.old
 nxb-bin
 EOF
+
+# Need to convert IMAGESIZE from bytes to bibytes
+# This conversion is needed to be compliant with marketing 'unit'
+# without this, a 2GiB image will not fit into a 2GB flash disk (=1862MiB)
+
+IMAGESIZE_UNIT=$(printf ${IMAGESIZE} | tail -c 1)
+IMAGESIZE_VALUE=${IMAGESIZE%?}
+NEW_IMAGESIZE_UNIT=""
+NEW_IMAGESIZE_SIZE=""
+case "${IMAGESIZE_UNIT}" in
+        k|K)
+                DIVIDER=$(echo "scale=3; 1024 / 1000" | bc)
+                ;;
+        m|M)
+                DIVIDER=$(echo "scale=6; 1024 * 1024 / 1000000" | bc)
+                NEW_IMAGESIZE_UNIT="k"
+                ;;
+        g|G)
+                DIVIDER=$(echo "scale=9; 1024 * 1024 * 1024 / 1000000000" | bc)
+                NEW_IMAGESIZE_UNIT="m"
+                ;;
+        t|T)
+                DIVIDER=$(echo "scale=12; 1024 * 1024 * 1024 * 1024 / 1000000000000" | bc)
+                NEW_IMAGESIZE_UNIT="g"
+                ;;
+        *)
+                NEW_IMAGESIZE_UNIT=""
+                NEW_IMAGESIZE_SIZE=${IMAGESIZE}
+esac
+# truncate accept only integer value, and bc needs a divide per 1 for refreshing scale
+[ -z "${NEW_IMAGESIZE_SIZE}" ] && NEW_IMAGESIZE_SIZE=$(echo "scale=9;var=${IMAGESIZE_VALUE} / ${DIVIDER}; scale=0; ( var * 1000 ) /1" | bc)
+IMAGESIZE="${NEW_IMAGESIZE_SIZE}${NEW_IMAGESIZE_UNIT}"
+
 case "${MEDIATYPE}" in
 embedded)
 	truncate -s ${IMAGESIZE} ${WRKDIR}/raw.img
@@ -258,7 +292,7 @@ embedded)
 	mkdir -p ${WRKDIR}/world/boot/msdos
 	mount_msdosfs /dev/${md}s1 /${WRKDIR}/world/boot/msdos
 	;;
-rawdisk)
+rawdisk|dump)
 	truncate -s ${IMAGESIZE} ${WRKDIR}/raw.img
 	md=$(/sbin/mdconfig ${WRKDIR}/raw.img)
 	newfs -j -L ${IMAGENAME} /dev/${md}
@@ -313,7 +347,7 @@ touch ${WRKDIR}/src.conf
 [ ! -f ${POUDRIERED}/image-${JAILNAME}-${SETNAME}-src.conf ] || cat ${POUDRIERED}/image-${JAILNAME}-${SETNAME}-src.conf >> ${WRKDIR}/src.conf
 make -C ${mnt}/usr/src DESTDIR=${WRKDIR}/world BATCH_DELETE_OLD_FILES=yes SRCCONF=${WRKDIR}/src.conf delete-old delete-old-libs
 
-[ ! -d "${EXTRADIR}" ] || cp -fRLp ${EXTRADIR}/ ${WRKDIR}/world/
+[ ! -d "${EXTRADIR}" ] || cp -fRPp ${EXTRADIR}/ ${WRKDIR}/world/
 mv ${WRKDIR}/world/etc/login.conf.orig ${WRKDIR}/world/etc/login.conf
 cap_mkdb ${WRKDIR}/world/etc/login.conf
 
@@ -376,7 +410,7 @@ iso)
 	EOF
 	cpdup -i0 ${WRKDIR}/world/boot ${WRKDIR}/out/boot
 	;;
-rawdisk)
+rawdisk|dump)
 	cat >> ${WRKDIR}/world/etc/fstab <<-EOF
 	/dev/ufs/${IMAGENAME} / ufs rw 1 1
 	EOF
@@ -462,6 +496,7 @@ usb)
 	;;
 zrawdisk)
 	cat >> ${WRKDIR}/world/boot/loader.conf <<-EOF
+	zfs_load="YES"
 	vfs.root.mountfrom="zfs:${zroot}/ROOT/default"
 	EOF
 	;;
@@ -530,6 +565,14 @@ rawdisk)
 	/sbin/mdconfig -d -u ${md#md}
 	md=
 	mv ${WRKDIR}/raw.img ${OUTPUTDIR}/${FINALIMAGE}
+	;;
+dump)
+	FINALIMAGE=${IMAGENAME}.dump
+	umount ${WRKDIR}/world
+	dump -0Raf ${WRKDIR}/raw.dump /dev/${md}
+	/sbin/mdconfig -d -u ${md#md}
+	md=
+	mv ${WRKDIR}/raw.dump ${OUTPUTDIR}/${FINALIMAGE}
 	;;
 embedded)
 	FINALIMAGE=${IMAGENAME}.img

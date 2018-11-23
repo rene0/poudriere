@@ -70,9 +70,6 @@ not_for_os() {
 }
 
 err() {
-	if [ -n "${IGNORE_ERR}" ]; then
-		return 0
-	fi
 	trap '' SIGINFO
 	export CRASHED=1
 	if [ $# -ne 2 ]; then
@@ -80,7 +77,7 @@ err() {
 	fi
 	# Try to set status so other processes know this crashed
 	# Don't set it from children failures though, only master
-	if [ -z "${PARALLEL_CHILD}" ] && was_a_bulk_run; then
+	if [ "${PARALLEL_CHILD:-0}" -eq 0 ] && was_a_bulk_run; then
 		if [ -n "${MY_JOBID}" ]; then
 			bset ${MY_JOBID} status "${EXIT_STATUS:-crashed:}" \
 			    2>/dev/null || :
@@ -291,7 +288,7 @@ _mastermnt() {
 	# Avoid : which causes issues with PATH for non-jailed commands
 	# like portlint in testport.
 	mastername="${MASTERNAME}"
-	_gsub "${mastername}" ":" "_"
+	_gsub_simple "${mastername}" ":"
 	mastername="${_gsub}"
 	mnt="${POUDRIERE_DATA}/.m/${mastername}/ref"
 	if [ -z "${NOLINUX}" ]; then
@@ -329,7 +326,7 @@ _my_path() {
 }
 
 _my_name() {
-	setvar "$1" "${MASTERNAME}${MY_JOBID+-job-${MY_JOBID}}"
+	setvar "$1" "${MASTERNAME}${MY_JOBID:+-job-${MY_JOBID}}"
 }
  
 _log_path_top() {
@@ -583,7 +580,7 @@ jstart() {
 	_my_name name
 	# Restrict to no networking (if RESTRICT_NETWORKING==yes)
 	jail -c persist name=${name} \
-		path=${MASTERMNT}${MY_JOBID+/../${MY_JOBID}} \
+		path=${MASTERMNT}${MY_JOBID:+/../${MY_JOBID}} \
 		host.hostname=${BUILDER_HOSTNAME-${name}} \
 		${network} ${JAIL_PARAMS}
 	[ "${USE_JEXECD}" = "yes" ] && \
@@ -592,7 +589,7 @@ jstart() {
 	    ${MAX_FILES+-n ${MAX_FILES}}
 	# Allow networking in -n jail
 	jail -c persist name=${name}-n \
-		path=${MASTERMNT}${MY_JOBID+/../${MY_JOBID}} \
+		path=${MASTERMNT}${MY_JOBID:+/../${MY_JOBID}} \
 		host.hostname=${BUILDER_HOSTNAME-${name}} \
 		${ipargs} ${JAIL_PARAMS} ${JAIL_NET_PARAMS}
 	[ "${USE_JEXECD}" = "yes" ] && \
@@ -1369,6 +1366,7 @@ get_data_dir() {
 		# rene: these work as expected:
 		zfs create ${ZPOOL}${ZROOTFS}/data/.m
 		zfs create -o compression=off ${ZPOOL}${ZROOTFS}/data/cache
+		zfs create -o compression=on ${ZPOOL}${ZROOTFS}/data/images
 		zfs create -o compression=lz4 ${ZPOOL}${ZROOTFS}/data/logs
 		zfs create -o compression=off ${ZPOOL}${ZROOTFS}/data/packages
 		zfs create -o compression=off ${ZPOOL}${ZROOTFS}/data/wrkdirs
@@ -1440,7 +1438,7 @@ common_mtree() {
 		echo ".${dir}"
 	done
 	# Ignore schg files when not testing.
-	if schg_immutable_base && [ -z "${PORTTESTING}" ]; then
+	if schg_immutable_base && [ "${PORTTESTING}" -eq 0 ]; then
 		schgpaths="/ /usr /boot"
 		for dir in ${schgpaths}; do
 			[ -f "${MASTERMNT}${dir}/.cpignore" ] || continue
@@ -1453,10 +1451,9 @@ common_mtree() {
 }
 
 markfs() {
-	[ $# -lt 2 ] && eargs markfs name mnt path
+	[ $# -ne 2 ] && eargs markfs name mnt
 	local name=$1
 	local mnt="${2}"
-	local path="$3"
 	echo "markfs 1: mnt=${mnt} ALTROOT=${ALTROOT}"
 	local fs="$(zfs_getfs ${mnt})"
 	local dozfs=0
@@ -1537,7 +1534,7 @@ markfs() {
 		} > "${mtreefiletmp}" && \
 		    rename "${mtreefiletmp}" "${mtreefile}"
 	fi
-	( cd "${mnt}${path}" && mtree -X "${mtreefile}" \
+	( cd "${mnt}" && mtree -X "${mtreefile}" \
 		-cn -k uid,gid,flags,mode,size \
 		-p . ) > "${mnt}/.p/mtree.${name}"
 	echo " done"
@@ -1859,7 +1856,7 @@ stash_packages() {
 		# If the .building directory is still around, use it. The
 		# previous build may have failed, but all of the successful
 		# packages are still worth keeping for this build.
-		msg "Using packages from previously failed build"
+		msg "Using packages from previously failed build: ${PACKAGES}/.building"
 	else
 		msg "Stashing existing package repository"
 
@@ -1898,7 +1895,8 @@ commit_packages() {
 		return 0
 	fi
 
-	msg "Committing packages to repository"
+	pkgdir_new=.real_$(clock -epoch)
+	msg "Committing packages to repository: ${PACKAGES_ROOT}/${pkgdir_new} via .latest symlink"
 	bset status "committing:"
 
 	# Find any new top-level files not symlinked yet. This is
@@ -1929,7 +1927,6 @@ symlink to .latest/${name}"
 	pkgdir_old=$(realpath ${PACKAGES_ROOT}/.latest 2>/dev/null || :)
 
 	# Rename shadow dir to a production name
-	pkgdir_new=.real_$(clock -epoch)
 	mv ${PACKAGES_ROOT}/.building ${PACKAGES_ROOT}/${pkgdir_new}
 
 	# XXX: Copy in packages that failed to build
@@ -2992,7 +2989,7 @@ _real_build_port() {
 	local network
 	local hangstatus
 	local pkgenv phaseenv jpkg
-	local targets install_order
+	local targets install_order deinstall
 	local jailuser
 	local testfailure=0
 	local max_execution_time allownetworking
@@ -3048,18 +3045,20 @@ _real_build_port() {
 	install_order="run-depends stage package"
 	# Don't need to install if only making packages and not
 	# testing.
-	[ -n "${PORTTESTING}" ] && \
-	    install_order="${install_order} install"
+	if [ "${PORTTESTING}" -eq 1 ]; then
+		install_order="${install_order} install"
+		deinstall="deinstall"
+	fi
 	targets="check-sanity pkg-depends fetch-depends fetch checksum \
 		  extract-depends extract patch-depends patch build-depends \
 		  lib-depends configure build ${install_order} \
-		  ${PORTTESTING:+deinstall}"
+		  ${deinstall-}"
 
 	# If not testing, then avoid rechecking deps in build/install;
 	# When testing, check depends twice to ensure they depend on
 	# proper files, otherwise they'll hit 'package already installed'
 	# errors.
-	if [ -z "${PORTTESTING}" ]; then
+	if [ "${PORTTESTING}" -eq 0 ]; then
 		PORT_FLAGS="${PORT_FLAGS} NO_DEPENDS=yes"
 	else
 		PORT_FLAGS="${PORT_FLAGS} STRICT_DEPENDS=yes"
@@ -3071,11 +3070,11 @@ _real_build_port() {
 		JUSER=${jailuser}
 		bset_job_status "${phase}" "${originspec}"
 		job_msg_verbose "Status   ${COLOR_PORT}${port}${flavor:+@${flavor}} | ${PKGNAME}${COLOR_RESET}: ${COLOR_PHASE}${phase}"
-		[ -n "${PORTTESTING}" ] && \
+		[ "${PORTTESTING}" -eq 1 ] && \
 		    phaseenv="${phaseenv} DEVELOPER_MODE=yes"
 		case ${phase} in
 		check-sanity)
-			[ -n "${PORTTESTING}" ] && \
+			[ "${PORTTESTING}" -eq 1 ] && \
 			    phaseenv="${phaseenv} DEVELOPER=1"
 			;;
 		fetch)
@@ -3095,10 +3094,10 @@ _real_build_port() {
 				chown -R ${JUSER} ${mnt}/wrkdirs
 			fi
 			;;
-		configure) [ -n "${PORTTESTING}" ] && markfs prebuild ${mnt} ;;
+		configure) [ "${PORTTESTING}" -eq 1 ] && markfs prebuild ${mnt} ;;
 		run-depends)
 			JUSER=root
-			if [ -n "${PORTTESTING}" ]; then
+			if [ "${PORTTESTING}" -eq 1 ]; then
 				check_fs_violation ${mnt} prebuild \
 				    "${originspec}" \
 				    "Checking for filesystem violations" \
@@ -3112,15 +3111,14 @@ _real_build_port() {
 			fi
 			;;
 		checksum|*-depends) JUSER=root ;;
-		stage) [ -n "${PORTTESTING}" ] && markfs prestage ${mnt} ;;
+		stage) [ "${PORTTESTING}" -eq 1 ] && markfs prestage ${mnt} ;;
 		install)
 			max_execution_time=${MAX_EXECUTION_TIME_INSTALL}
 			JUSER=root
-			[ -n "${PORTTESTING}" ] && markfs preinst ${mnt}
-			;;
+			[ "${PORTTESTING}" -eq 1 ] && markfs preinst ${mnt} ;;
 		package)
 			max_execution_time=${MAX_EXECUTION_TIME_PACKAGE}
-			if [ -n "${PORTTESTING}" ]; then
+			if [ "${PORTTESTING}" -eq 1 ]; then
 				check_fs_violation ${mnt} prestage \
 				    "${originspec}" \
 				    "Checking for staging violations" \
@@ -3219,7 +3217,7 @@ _real_build_port() {
 			    ${DISTFILES_CACHE} || return 1
 		fi
 
-		if [ "${phase}" = "stage" -a -n "${PORTTESTING}" ]; then
+		if [ "${phase}" = "stage" -a "${PORTTESTING}" -eq 1 ]; then
 			local die=0
 
 			bset_job_status "stage-qa" "${originspec}"
@@ -4170,7 +4168,7 @@ stop_build() {
 		fi
 		rm -rf "${PACKAGES}/.npkg/${PKGNAME}"
 
-		if [ -n "${PORTTESTING}" ]; then
+		if [ "${PORTTESTING}" -eq 1 ]; then
 			if jail_has_processes; then
 				msg_warn "Leftover processes:"
 				injail ps auxwwd | egrep -v '(ps auxwwd|jexecd)'
@@ -6736,8 +6734,8 @@ get_porttesting() {
 	local pkgname="$1"
 	local porttesting
 
-	porttesting=
-	if [ -n "${PORTTESTING}" ]; then
+	porttesting=0
+	if [ "${PORTTESTING}" -eq 1 ]; then
 		if [ ${ALL} -eq 1 -o ${PORTTESTING_RECURSIVE} -eq 1 ]; then
 			porttesting=1
 		elif pkgname_is_listed "${pkgname}"; then
@@ -7030,11 +7028,15 @@ prepare_ports() {
 
 		if [ ${JAIL_NEEDS_CLEAN} -eq 1 ]; then
 			msg_n "Cleaning all packages due to newer version of the jail..."
+			rm -rf ${PACKAGES}/* ${cache_dir}
+			echo " done"
 		elif [ ${CLEAN} -eq 1 ]; then
+			if [ "${ATOMIC_PACKAGE_REPOSITORY}" != "yes" ] && \
+			    package_dir_exists_and_has_packages; then
+				confirm_if_tty "Are you sure you want to clean all packages?" || \
+				    err 1 "Not cleaning all packages"
+			fi
 			msg_n "(-c) Cleaning all packages..."
-		fi
-
-		if [ ${JAIL_NEEDS_CLEAN} -eq 1 ] || [ ${CLEAN} -eq 1 ]; then
 			rm -rf ${PACKAGES}/* ${cache_dir}
 			echo " done"
 		fi
@@ -7047,13 +7049,18 @@ prepare_ports() {
 			    pkgname; do
 				pkg="${PACKAGES}/All/${pkgname}.${PKG_EXT}"
 				if [ -f "${pkg}" ]; then
-					msg "(-C) Deleting existing package: ${pkg##*/}"
+					msg "(-C) Will delete existing package: ${pkg##*/}"
 					delete_pkg_xargs "${delete_pkg_list}" \
 					    "${pkg}"
 				fi
 			done
 			check_dep_fatal_error && \
 			    err 1 "Error processing -C packages"
+			if [ "${ATOMIC_PACKAGE_REPOSITORY}" != "yes" ] && \
+			    [ -s "${delete_pkg_list}" ]; then
+				confirm_if_tty "Are you sure you want to delete the listed packages?" || \
+				    err 1 "Not cleaning packages"
+			fi
 			msg "(-C) Flushing package deletions"
 			cat "${delete_pkg_list}" | tr '\n' '\000' | \
 			    xargs -0 rm -rf
@@ -7740,6 +7747,7 @@ fi
 : ${JAIL_NEEDS_CLEAN:=0}
 : ${VERBOSE:=0}
 : ${QEMU_EMULATING:=0}
+: ${PORTTESTING:=0}
 : ${PORTTESTING_FATAL:=yes}
 : ${PORTTESTING_RECURSIVE:=0}
 : ${PRIORITY_BOOST_VALUE:=99}
